@@ -1,5 +1,5 @@
 import jwt from 'jsonwebtoken';
-import { v4 as uuidv4 } from 'uuid';
+import crypto from 'crypto';
 import config from '../config/env';
 import { IJWTPayload, TokenPair, UserRole } from '../types';
 import RefreshToken from '../models/RefreshToken';
@@ -26,7 +26,8 @@ class JWTService {
     }
 
     generateRefreshToken(): string {
-        return uuidv4();
+        // Use Node's crypto.randomUUID() to avoid importing ESM-only `uuid` package at runtime
+        return crypto.randomUUID();
     }
 
     verifyAccessToken(token: string): IJWTPayload {
