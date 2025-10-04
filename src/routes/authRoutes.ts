@@ -1,0 +1,33 @@
+import { Router } from 'express';
+import authController from '../controllers/authController';
+import googleAuthController from '../controllers/googleAuthController';
+import { authenticate } from '../middlewares/authMiddleware';
+import { validateBody } from '../middlewares/validationMiddleware';
+import { authRateLimiter } from '../middlewares/securityMiddleware';
+import {
+    loginSchema,
+    signupSchema,
+    updateProfileSchema,
+    changePasswordSchema,
+} from '../validators/authValidator';
+
+const router = Router();
+
+// Public routes (with rate limiting)
+router.post('/signup', authRateLimiter, validateBody(signupSchema), authController.signup);
+router.post('/login', authRateLimiter, validateBody(loginSchema), authController.login);
+router.post('/refresh', authController.refreshToken);
+
+// Google OAuth routes
+router.get('/google', googleAuthController.googleAuth);
+router.get('/google/callback', googleAuthController.googleCallback);
+
+// Protected routes (require authentication)
+router.post('/logout', authenticate, authController.logout);
+router.post('/logout-all', authenticate, authController.logoutAll);
+router.get('/profile', authenticate, authController.getProfile);
+router.put('/profile', authenticate, validateBody(updateProfileSchema), authController.updateProfile);
+router.put('/change-password', authenticate, validateBody(changePasswordSchema), authController.changePassword);
+router.get('/verify', authenticate, authController.verifyAuth);
+
+export default router;
