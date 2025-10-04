@@ -3,7 +3,7 @@ import cors from 'cors';
 import rateLimit from 'express-rate-limit';
 import mongoSanitize from 'express-mongo-sanitize';
 import config from '../config/env';
-import { Request, Response } from 'express';
+import { Request, Response, NextFunction } from 'express';
 import apiResponse from '../utils/apiResponse';
 
 export const helmetMiddleware = helmet({
@@ -64,15 +64,59 @@ export const generalRateLimiter = rateLimit({
     },
 });
 
-export const mongoSanitizeMiddleware = mongoSanitize({
+// Create an instance of the sanitizer middleware and wrap it to avoid
+// throwing if the request object has read-only properties in some environments.
+const _mongoSanitize = mongoSanitize({
     replaceWith: '_',
     onSanitize: ({ req, key }) => {
-        console.warn(`Sanitized key: ${key} in request from ${req.ip}`);
+        // avoid accessing req properties directly in case they're implemented as getters only
+        const ip = (req && (req as any).ip) || 'unknown';
+        console.warn(`Sanitized key: ${key} in request from ${ip}`);
     },
 });
 
+function ensureMutableProps(target: any, props: string[]) {
+    for (const prop of props) {
+        try {
+            const desc = Object.getOwnPropertyDescriptor(target, prop) || Object.getOwnPropertyDescriptor(Object.getPrototypeOf(target) || {}, prop);
+            // if descriptor exists and is not writable (getter-only), replace with an own-writable copy
+            if (desc && desc.get && !desc.set) {
+                const value = (target as any)[prop];
+                Object.defineProperty(target, prop, {
+                    configurable: true,
+                    enumerable: true,
+                    writable: true,
+                    value: value === undefined ? {} : (Array.isArray(value) ? [...value] : { ...value }),
+                });
+            } else if (!desc) {
+                // no descriptor found (rare) — ensure property exists as object
+                if ((target as any)[prop] === undefined) {
+                    Object.defineProperty(target, prop, {
+                        configurable: true,
+                        enumerable: true,
+                        writable: true,
+                        value: {},
+                    });
+                }
+            }
+        } catch (e) {
+            // ignore — we'll handle sanitizer errors by skipping
+        }
+    }
+}
+
+export const mongoSanitizeMiddleware = (req: Request, res: Response, next: NextFunction) => {
+    try {
+        ensureMutableProps(req, ['query', 'body', 'params']);
+
+        return _mongoSanitize(req as any, res as any, next as any);
+    } catch (err) {
+        console.warn('mongoSanitize middleware failed, skipping sanitize for this request:', err);
+        return next();
+    }
+};
+
 export const csrfProtection = (req: Request, _res: Response, next: Function) => {
-    // Skip CSRF for API routes with JWT
     if (req.path.startsWith('/api/')) {
         return next();
     }

@@ -10,7 +10,7 @@ interface IUserModel extends Model<IUserDocument> {
     findByEmail(email: string): Promise<IUserDocument | null>;
 }
 
-const userSchema = new Schema<IUserDocument>(
+const userSchema = new Schema<any>(
     {
         email: {
             type: String,
@@ -46,6 +46,22 @@ const userSchema = new Schema<IUserDocument>(
             type: Boolean,
             default: false,
         },
+        verificationToken: {
+            type: String,
+            select: false,
+        },
+        verificationExpires: {
+            type: Date,
+            select: false,
+        },
+        passwordResetToken: {
+            type: String,
+            select: false,
+        },
+        passwordResetExpires: {
+            type: Date,
+            select: false,
+        },
         profileImage: {
             type: String,
         },
@@ -54,7 +70,7 @@ const userSchema = new Schema<IUserDocument>(
         timestamps: true,
         toJSON: {
             transform: (_, ret) => {
-                delete ret.password;
+                if ((ret as any).password !== undefined) delete (ret as any).password;
                 if ((ret as any).__v !== undefined) delete (ret as any).__v;
                 return ret;
             },
@@ -62,17 +78,16 @@ const userSchema = new Schema<IUserDocument>(
     }
 );
 
-userSchema.index({ email: 1 });
-userSchema.index({ googleId: 1 });
-userSchema.index({ role: 1 });
+// Unique/index declared on fields above (unique: true). Avoid duplicate index() calls to silence Mongoose warnings.
 
 userSchema.pre('save', async function (next) {
-    if (!this.isModified('password')) return next();
+    const user: any = this;
+    if (typeof user.isModified === 'function' && !user.isModified('password')) return next();
 
     try {
-        if (this.password) {
+        if (user.password) {
             const salt = await bcrypt.genSalt(12);
-            this.password = await bcrypt.hash(this.password, salt);
+            user.password = await bcrypt.hash(user.password, salt);
         }
         next();
     } catch (error: any) {
@@ -83,12 +98,13 @@ userSchema.pre('save', async function (next) {
 userSchema.methods.comparePassword = async function (
     candidatePassword: string
 ): Promise<boolean> {
-    if (!this.password) return false;
-    return bcrypt.compare(candidatePassword, this.password);
+    const user: any = this;
+    if (!user.password) return false;
+    return bcrypt.compare(candidatePassword, user.password);
 };
 
 userSchema.statics.findByEmail = function (email: string) {
-    return this.findOne({ email: email.toLowerCase() });
+    return this.findOne({ email: (email as any).toLowerCase() } as any);
 };
 
 const User = mongoose.model<IUserDocument, IUserModel>('User', userSchema);

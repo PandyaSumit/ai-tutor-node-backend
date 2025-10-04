@@ -1,9 +1,11 @@
 import { Request, Response } from 'express';
 import User from '../models/User';
 import jwtService from '../services/jwtService';
+import { sendVerificationEmail, sendPasswordResetEmail } from '../services/mailerService';
 import cookieHelper, { COOKIE_NAMES } from '../utils/cookieHelper';
 import apiResponse from '../utils/apiResponse';
 import { AuthRequest, UserRole } from '../types';
+import crypto from 'crypto';
 import { asyncHandler } from '../middlewares/errorMiddleware';
 
 class AuthController {
@@ -24,6 +26,22 @@ class AuthController {
             role: role || UserRole.STUDENT,
             isEmailVerified: false,
         });
+
+        // Generate email verification token
+        const verificationToken = crypto.randomUUID();
+        const verificationExpires = new Date();
+        verificationExpires.setHours(verificationExpires.getHours() + 24); // 24 hours
+
+        user.verificationToken = verificationToken;
+        user.verificationExpires = verificationExpires;
+        await user.save();
+
+        // Send verification email
+        try {
+            await sendVerificationEmail(user.email, verificationToken);
+        } catch (err) {
+            console.error('Error sending verification email:', err);
+        }
 
         // Generate tokens
         const deviceInfo = req.headers['user-agent'] || 'Unknown Device';
@@ -254,6 +272,65 @@ class AuthController {
         cookieHelper.clearTokens(res);
 
         apiResponse.success(res, 'Password changed successfully. Please login again.');
+    });
+
+    // Request password reset
+    requestPasswordReset = asyncHandler(async (req: Request, res: Response) => {
+        const { email } = req.body;
+        const user = await User.findByEmail(email);
+        if (!user) return apiResponse.notFound(res, 'User not found');
+
+        const token = crypto.randomUUID();
+        const expires = new Date();
+        expires.setHours(expires.getHours() + 2); // 2 hours
+
+        user.passwordResetToken = token;
+        user.passwordResetExpires = expires;
+        await user.save();
+
+        try {
+            await sendPasswordResetEmail(user.email, token);
+        } catch (err) {
+            console.error('Error sending password reset email:', err);
+        }
+
+        apiResponse.success(res, 'Password reset email sent');
+    });
+
+    // Reset password
+    resetPassword = asyncHandler(async (req: Request, res: Response) => {
+        const { token, password, confirmPassword } = req.body;
+        if (!token) return apiResponse.badRequest(res, 'Token is required');
+        if (!password || !confirmPassword) return apiResponse.badRequest(res, 'Password and confirmPassword are required');
+        if (password !== confirmPassword) return apiResponse.badRequest(res, 'Passwords do not match');
+
+        const user = await User.findOne({ passwordResetToken: token }).select('+passwordResetToken +passwordResetExpires');
+        if (!user) return apiResponse.notFound(res, 'Invalid token');
+        if (!user.passwordResetExpires || user.passwordResetExpires < new Date()) return apiResponse.badRequest(res, 'Token expired');
+
+        user.password = password;
+        user.passwordResetToken = undefined as any;
+        user.passwordResetExpires = undefined as any;
+        await user.save();
+
+        apiResponse.success(res, 'Password reset successful');
+    });
+
+    // Verify email
+    verifyEmail = asyncHandler(async (req: Request, res: Response) => {
+        const { token } = req.body;
+        if (!token) return apiResponse.badRequest(res, 'Token is required');
+
+        const user = await User.findOne({ verificationToken: token }).select('+verificationToken +verificationExpires');
+        if (!user) return apiResponse.notFound(res, 'Invalid verification token');
+        if (!user.verificationExpires || user.verificationExpires < new Date()) return apiResponse.badRequest(res, 'Verification token expired');
+
+        user.isEmailVerified = true;
+        user.verificationToken = undefined as any;
+        user.verificationExpires = undefined as any;
+        await user.save();
+
+        apiResponse.success(res, 'Email verified successfully');
     });
 
     verifyAuth = asyncHandler(async (req: AuthRequest, res: Response) => {

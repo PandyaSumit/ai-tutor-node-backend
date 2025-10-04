@@ -2,79 +2,83 @@ import { Request } from 'express';
 import { JwtPayload } from 'jsonwebtoken';
 
 export enum UserRole {
-  STUDENT = 'student',
-  TUTOR = 'tutor',
-  ADMIN = 'admin',
+    STUDENT = 'student',
+    TUTOR = 'tutor',
+    ADMIN = 'admin',
 }
 
 export interface IUser {
-  _id: string;
-  email: string;
-  name: string;
-  password?: string;
-  googleId?: string;
-  role: UserRole;
-  isEmailVerified: boolean;
-  profileImage?: string;
-  createdAt: Date;
-  updatedAt: Date;
+    _id: string;
+    email: string;
+    name: string;
+    password?: string;
+    googleId?: string;
+    role: UserRole;
+    isEmailVerified: boolean;
+    verificationToken?: string;
+    verificationExpires?: Date;
+    passwordResetToken?: string;
+    passwordResetExpires?: Date;
+    profileImage?: string;
+    createdAt: Date;
+    updatedAt: Date;
 }
 
 export interface IRefreshToken {
-  _id: string;
-  userId: string;
-  token: string;
-  deviceInfo: string;
-  ipAddress: string;
-  expiresAt: Date;
-  createdAt: Date;
-  isRevoked: boolean;
+    _id: string;
+    userId: string;
+    token: string;
+    deviceInfo: string;
+    ipAddress: string;
+    expiresAt: Date;
+    createdAt: Date;
+    isRevoked: boolean;
 }
 
 export interface IJWTPayload extends JwtPayload {
-  userId: string;
-  email: string;
-  role: UserRole;
+    userId: string;
+    email: string;
+    role: UserRole;
 }
 
 export interface AuthRequest extends Request {
-  user?: IJWTPayload;
+    user?: IJWTPayload;
 }
 
 export interface TokenPair {
-  accessToken: string;
-  refreshToken: string;
+    accessToken: string;
+    refreshToken: string;
 }
 
 export interface LoginCredentials {
-  email: string;
-  password: string;
+    email: string;
+    password: string;
 }
 
 export interface SignupCredentials {
-  email: string;
-  password: string;
-  name: string;
-  role?: UserRole;
+    email: string;
+    password: string;
+    name: string;
+    role?: UserRole;
 }
 
 export interface GoogleProfile {
-  id: string;
-  email: string;
-  name: string;
-  picture?: string;
+    id: string;
+    email: string;
+    name: string;
+    picture?: string;
 }
 
 export interface ApiResponse<T = any> {
-  success: boolean;
-  message: string;
-  data?: T;
-  error?: string;
+    success: boolean;
+    message: string;
+    data?: T;
+    error?: string;
 }
 
 export interface PaginationParams {
-  page: number;
-  limit: number;
-  sort?: string;
-  order?: 'asc' | 'desc';
+    page: number;
+    limit: number;
+    sort?: string;
+    order?: 'asc' | 'desc';
 }

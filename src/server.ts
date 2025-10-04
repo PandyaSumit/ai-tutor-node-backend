@@ -70,21 +70,33 @@ setInterval(async () => {
     }
 }, 24 * 60 * 60 * 1000);
 
-// Start server
+// Start server and handle listen errors (EADDRINUSE)
 const PORT = config.port;
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
     console.log(`
-    ╔══════════════════════════════════════════════
-    ║   🚀 Server Started Successfully            ║
-    ║                                             ║
-    ║   Environment: ${config.nodeEnv.padEnd(21)} ║
-    ║   Port: ${PORT.toString().padEnd(29)}       ║
-    ║   API URL: ${config.apiUrl.padEnd(25)}      ║
-    ║                                             ║
-    ║   📚 API Documentation:                     ║
-    ║   ${config.apiUrl}/health${' '.repeat(16)}  ║
-    ╚══════════════════════════════════════════════
-  `);
+        ╔══════════════════════════════════════════════
+        ║   🚀 Server Started Successfully            ║
+        ║                                             ║
+        ║   Environment: ${config.nodeEnv.padEnd(21)} ║
+        ║   Port: ${PORT.toString().padEnd(29)}       ║
+        ║   API URL: ${config.apiUrl.padEnd(25)}      ║
+        ║                                             ║
+        ║   📚 API Documentation:                     ║
+        ║   ${config.apiUrl}/health${' '.repeat(16)}  ║
+        ╚══════════════════════════════════════════════
+    `);
+});
+
+server.on('error', (err: any) => {
+    if (err && err.code === 'EADDRINUSE') {
+        console.error(`❌ Port ${PORT} is already in use. Another process is listening on this port.`);
+        console.error('To free the port on Windows run:');
+        console.error('  netstat -ano | findstr :' + PORT);
+        console.error('  taskkill /PID <PID_FROM_PREVIOUS_COMMAND> /F');
+        process.exit(1);
+    }
+    console.error('Server error:', err);
+    process.exit(1);
 });
 
 // Handle unhandled promise rejections

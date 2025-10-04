@@ -18,6 +18,11 @@ router.post('/signup', authRateLimiter, validateBody(signupSchema), authControll
 router.post('/login', authRateLimiter, validateBody(loginSchema), authController.login);
 router.post('/refresh', authController.refreshToken);
 
+// Password reset / email verification
+router.post('/request-password-reset', authController.requestPasswordReset);
+router.post('/reset-password', authController.resetPassword);
+router.post('/verify-email', authController.verifyEmail);
+
 // Google OAuth routes
 router.get('/google', googleAuthController.googleAuth);
 router.get('/google/callback', googleAuthController.googleCallback);
