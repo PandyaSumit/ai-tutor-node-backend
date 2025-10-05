@@ -1,5 +1,5 @@
 import mongoose, { Schema, Document, Model } from 'mongoose';
-import { IRefreshToken } from '../types';
+import { IRefreshToken } from '@/types';
 
 export interface IRefreshTokenDocument extends Omit<IRefreshToken, '_id'>, Document {
     isExpired(): boolean;

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { UserRole } from '../types';
+import { UserRole } from '@/types';
 
 export const emailSchema = z
     .string()

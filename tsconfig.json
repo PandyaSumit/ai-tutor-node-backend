@@ -33,6 +33,11 @@
       "@validators/*": ["src/validators/*"]
     }
   },
+    "ts-node": {
+    "require": ["tsconfig-paths/register"],
+    "transpileOnly": true,
+    "files": true
+  },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist", "**/*.spec.ts"]
 }

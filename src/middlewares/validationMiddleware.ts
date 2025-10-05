@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
-import { ZodSchema, ZodError } from 'zod';
-import apiResponse from '../utils/apiResponse';
+import { ZodSchema, ZodError, AnyZodObject } from 'zod';
+import apiResponse from '@/utils/apiResponse';
+import logger from '@/config/logger';
 
 export const validateBody = (schema: ZodSchema) => {
     return (req: Request, res: Response, next: NextFunction): void => {
@@ -61,3 +62,38 @@ export const validateParams = (schema: ZodSchema) => {
         }
     };
 };
+
+
+export function validateRequest(schema: AnyZodObject) {
+    return async (req: Request, res: Response, next: NextFunction): Promise<Response | void> => {
+        try {
+            await schema.parseAsync({
+                body: req.body,
+                query: req.query,
+                params: req.params
+            });
+            next();
+        } catch (error) {
+            if (error instanceof ZodError) {
+                const errors = error.errors.map(err => ({
+                    field: err.path.join('.'),
+                    message: err.message
+                }));
+
+                logger.warn('Validation error:', errors);
+
+                return res.status(400).json({
+                    success: false,
+                    message: 'Validation error',
+                    errors
+                });
+            }
+
+            logger.error('Validation middleware error:', error);
+            return res.status(500).json({
+                success: false,
+                message: 'Validation failed'
+            });
+        }
+    };
+}

@@ -1,12 +1,12 @@
 import { Request, Response } from 'express';
-import User from '../models/User';
-import jwtService from '../services/jwtService';
-import { sendVerificationEmail, sendPasswordResetEmail } from '../services/mailerService';
-import cookieHelper, { COOKIE_NAMES } from '../utils/cookieHelper';
-import apiResponse from '../utils/apiResponse';
-import { AuthRequest, UserRole } from '../types';
+import User from '@/models/User';
+import jwtService from '@/services/jwtService';
+import { sendVerificationEmail, sendPasswordResetEmail } from '@/services/mailerService';
+import cookieHelper, { COOKIE_NAMES } from '@/utils/cookieHelper';
+import apiResponse from '@/utils/apiResponse';
+import { AuthRequest, UserRole } from '@/types';
 import crypto from 'crypto';
-import { asyncHandler } from '../middlewares/errorMiddleware';
+import { asyncHandler } from '@/middlewares/errorMiddleware';
 
 class AuthController {
     signup = asyncHandler(async (req: Request, res: Response) => {

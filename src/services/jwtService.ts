@@ -1,8 +1,8 @@
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
-import config from '../config/env';
-import { IJWTPayload, TokenPair, UserRole } from '../types';
-import RefreshToken from '../models/RefreshToken';
+import config from '@/config/env';
+import { IJWTPayload, TokenPair, UserRole } from '@/types';
+import RefreshToken from '@/models/RefreshToken';
 
 class JWTService {
 

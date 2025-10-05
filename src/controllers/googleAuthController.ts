@@ -1,11 +1,11 @@
 // backend/src/controllers/googleAuthController.ts
 
 import { Request, Response, NextFunction } from 'express';
-import passport from '../config/passport';
-import jwtService from '../services/jwtService';
-import cookieHelper from '../utils/cookieHelper';
-import config from '../config/env';
-import { IUserDocument } from '../models/User';
+import passport from '@/config/passport';
+import jwtService from '@/services/jwtService';
+import cookieHelper from '@/utils/cookieHelper';
+import config from '@/config/env';
+import { IUserDocument } from '@/models/User';
 
 class GoogleAuthController {
     googleAuth = passport.authenticate('google', {

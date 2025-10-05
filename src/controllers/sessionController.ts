@@ -1,0 +1,237 @@
+import { Request, Response } from 'express';
+import SessionService from '@/services/session/SessionService';
+import logger from '@/config/logger';
+import { AuthRequest } from '@/types'; // Import your AuthRequest type
+
+export class SessionController {
+    private sessionService: SessionService;
+
+    constructor() {
+        this.sessionService = new SessionService();
+    }
+
+    async createSession(req: Request, res: Response): Promise<Response> {
+        try {
+            const userId = (req as AuthRequest).user?.userId;
+            console.log('userId: ', userId);
+
+            if (!userId) {
+                return res.status(401).json({
+                    success: false,
+                    message: 'User not authenticated'
+                });
+            }
+
+            const { topic, metadata } = req.body;
+
+            const session = await this.sessionService.createSession(
+                userId,
+                topic,
+                metadata
+            );
+
+            return res.status(201).json({  // Add return here
+                success: true,
+                data: {
+                    session: {
+                        id: session._id,
+                        sessionId: session.sessionId,
+                        topic: session.metadata.topic,
+                        status: session.status,
+                        createdAt: session.createdAt
+                    }
+                }
+            });
+        } catch (error) {
+            logger.error('Create session error:', error);
+            return res.status(500).json({  // Add return here
+                success: false,
+                message: 'Failed to create session'
+            });
+        }
+    }
+
+    async getUserSessions(req: Request, res: Response): Promise<Response> {
+        try {
+            const userId = (req as AuthRequest).user?.userId;
+            const { status, limit = 20, page = 1 } = req.query;
+
+            if (!userId) {
+                return res.status(401).json({
+                    success: false,
+                    message: 'User not authenticated'
+                });
+            }
+
+            const sessions = await this.sessionService.getUserSessions(
+                userId,
+                status as string
+            );
+
+            const startIndex = (Number(page) - 1) * Number(limit);
+            const endIndex = startIndex + Number(limit);
+            const paginatedSessions = sessions.slice(startIndex, endIndex);
+
+            return res.json({  // Add return here
+                success: true,
+                data: {
+                    sessions: paginatedSessions,
+                    pagination: {
+                        total: sessions.length,
+                        page: Number(page),
+                        limit: Number(limit),
+                        pages: Math.ceil(sessions.length / Number(limit))
+                    }
+                }
+            });
+        } catch (error) {
+            logger.error('Get sessions error:', error);
+            return res.status(500).json({  // Add return here
+                success: false,
+                message: 'Failed to get sessions'
+            });
+        }
+    }
+
+    async getSession(req: Request, res: Response): Promise<Response> {
+        try {
+            const { sessionId } = req.params;
+            const userId = (req as AuthRequest).user?.userId; // FIXED
+
+            if (!userId) {
+                return res.status(401).json({
+                    success: false,
+                    message: 'User not authenticated'
+                });
+            }
+
+            const session = await this.sessionService.getSession(sessionId);
+
+            if (!session) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'Session not found'
+                });
+            }
+
+            if (session.userId.toString() !== userId) {
+                return res.status(403).json({
+                    success: false,
+                    message: 'Access denied'
+                });
+            }
+
+            return res.json({
+                success: true,
+                data: { session }
+            });
+
+        } catch (error) {
+            logger.error('Get session error:', error);
+            return res.status(500).json({
+                success: false,
+                message: 'Failed to get session'
+            });
+        }
+    }
+
+    async resumeSession(req: Request, res: Response): Promise<Response> {
+        try {
+            const { sessionId } = req.params;
+            const userId = (req as AuthRequest).user?.userId; // FIXED
+
+            if (!userId) {
+                return res.status(401).json({
+                    success: false,
+                    message: 'User not authenticated'
+                });
+            }
+
+            const session = await this.sessionService.resumeSession(
+                sessionId,
+                userId
+            );
+
+            if (!session) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'Session not found or already ended'
+                });
+            }
+
+            return res.json({
+                success: true,
+                data: { session }
+            });
+        } catch (error) {
+            logger.error('Resume session error:', error);
+            return res.status(500).json({
+                success: false,
+                message: 'Failed to resume session'
+            });
+        }
+    }
+
+    async endSession(req: Request, res: Response): Promise<Response> { // Added return type
+        try {
+            const { sessionId } = req.params;
+            const userId = (req as AuthRequest).user?.userId; // FIXED
+
+            if (!userId) {
+                return res.status(401).json({
+                    success: false,
+                    message: 'User not authenticated'
+                });
+            }
+
+            await this.sessionService.endSession(sessionId, userId);
+
+            return res.json({
+                success: true,
+                message: 'Session ended successfully'
+            });
+        } catch (error) {
+            logger.error('End session error:', error);
+            return res.status(500).json({
+                success: false,
+                message: 'Failed to end session'
+            });
+        }
+    }
+
+    async getSessionStats(req: Request, res: Response): Promise<Response> {
+        try {
+            const userId = (req as AuthRequest).user?.userId;
+
+            if (!userId) {
+                return res.status(401).json({
+                    success: false,
+                    message: 'User not authenticated'
+                });
+            }
+
+            const sessions = await this.sessionService.getUserSessions(userId);
+
+            const stats = {
+                total: sessions.length,
+                active: sessions.filter((s: any) => s.status === 'active').length,
+                completed: sessions.filter((s: any) => s.status === 'ended').length,
+                totalMessages: sessions.reduce((sum: number, s: any) => sum + s.metadata.messageCount, 0),
+                averageMessagesPerSession: sessions.length > 0
+                    ? sessions.reduce((sum: number, s: any) => sum + s.metadata.messageCount, 0) / sessions.length
+                    : 0
+            };
+
+            return res.json({  // Add return here
+                success: true,
+                data: { stats }
+            });
+        } catch (error) {
+            logger.error('Get stats error:', error);
+            return res.status(500).json({  // Add return here
+                success: false,
+                message: 'Failed to get statistics'
+            });
+        }
+    }
+}

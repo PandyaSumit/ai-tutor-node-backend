@@ -1,8 +1,11 @@
+// src/middlewares/authMiddleware.ts
+import jwt from 'jsonwebtoken';
 import { Request, Response, NextFunction } from 'express';
-import { AuthRequest, UserRole } from '../types';
-import jwtService from '../services/jwtService';
-import apiResponse from '../utils/apiResponse';
-import { COOKIE_NAMES } from '../utils/cookieHelper';
+import { AuthRequest, UserRole, IJWTPayload, IUser } from '@/types';
+import jwtService from '@/services/jwtService';
+import apiResponse from '@/utils/apiResponse';
+import { COOKIE_NAMES } from '@/utils/cookieHelper';
+import User from '@/models/User';
 
 export const authenticate = async (
     req: Request,
@@ -87,3 +90,29 @@ export const optionalAuth = async (
         next();
     }
 };
+
+export async function verifySocketToken(token: string): Promise<IJWTPayload> {
+    try {
+
+        const decoded = jwt.verify(token, process.env.JWT_SECRET!);
+
+        if (typeof decoded === 'object' && decoded !== null && 'userId' in decoded) {
+            const userId = (decoded as any).userId as string;
+
+            const user: IUser | null = await User.findById(userId).select('email role isActive');
+
+            if (!user || !user.isActive) throw new Error('User not found or inactive');
+
+            return {
+                userId: user._id,
+                email: user.email,
+                role: user.role
+            };
+        } else {
+            throw new Error('Invalid token payload');
+        }
+
+    } catch (error) {
+        throw new Error('Invalid token');
+    }
+}

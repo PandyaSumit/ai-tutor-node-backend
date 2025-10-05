@@ -1,8 +1,8 @@
 import passport from 'passport';
 import { Strategy as GoogleStrategy, Profile } from 'passport-google-oauth20';
 import config from './env';
-import User, { IUserDocument } from '../models/User';
-import { UserRole } from '../types';
+import User, { IUserDocument } from '@/models/User';
+import { UserRole } from '@/types';
 
 passport.use(
     new GoogleStrategy(

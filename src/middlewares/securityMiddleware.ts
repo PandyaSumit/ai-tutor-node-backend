@@ -2,9 +2,9 @@ import helmet from 'helmet';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
 import mongoSanitize from 'express-mongo-sanitize';
-import config from '../config/env';
+import config from '@/config/env';
 import { Request, Response, NextFunction } from 'express';
-import apiResponse from '../utils/apiResponse';
+import apiResponse from '@/utils/apiResponse';
 
 export const helmetMiddleware = helmet({
     contentSecurityPolicy: {

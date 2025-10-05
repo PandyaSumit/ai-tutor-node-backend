@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
-import config from '../config/env';
-import apiResponse from '../utils/apiResponse';
+import config from '@/config/env';
+import apiResponse from '@/utils/apiResponse';
 
 interface ErrorWithStatus extends Error {
     statusCode?: number;

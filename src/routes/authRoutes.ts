@@ -1,15 +1,15 @@
 import { Router } from 'express';
-import authController from '../controllers/authController';
-import googleAuthController from '../controllers/googleAuthController';
-import { authenticate } from '../middlewares/authMiddleware';
-import { validateBody } from '../middlewares/validationMiddleware';
-import { authRateLimiter } from '../middlewares/securityMiddleware';
 import {
     loginSchema,
     signupSchema,
     updateProfileSchema,
     changePasswordSchema,
-} from '../validators/authValidator';
+} from '@/validators/authValidator';
+import { authRateLimiter } from '@/middlewares/securityMiddleware';
+import authController from '@/controllers/authController';
+import { validateBody } from '@/middlewares/validationMiddleware';
+import googleAuthController from '@/controllers/googleAuthController';
+import { authenticate } from '@/middlewares/authMiddleware';
 
 const router = Router();
 

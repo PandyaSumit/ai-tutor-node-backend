@@ -14,6 +14,7 @@ export interface IUser {
     password?: string;
     googleId?: string;
     role: UserRole;
+    isActive?: boolean;
     isEmailVerified: boolean;
     verificationToken?: string;
     verificationExpires?: Date;

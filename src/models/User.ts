@@ -1,16 +1,18 @@
+// src/models/User.ts
 import mongoose, { Schema, Document, Model } from 'mongoose';
 import bcrypt from 'bcryptjs';
-import { UserRole, IUser } from '../types';
+import { UserRole, IUser } from '@/types';
 
 export interface IUserDocument extends Omit<IUser, '_id'>, Document {
     comparePassword(candidatePassword: string): Promise<boolean>;
+    isActive: boolean; // ✅ Add this
 }
 
 interface IUserModel extends Model<IUserDocument> {
     findByEmail(email: string): Promise<IUserDocument | null>;
 }
 
-const userSchema = new Schema<any>(
+const userSchema = new Schema<IUserDocument>(
     {
         email: {
             type: String,
@@ -46,6 +48,11 @@ const userSchema = new Schema<any>(
             type: Boolean,
             default: false,
         },
+        // ✅ Add isActive field
+        isActive: {
+            type: Boolean,
+            default: true,
+        },
         verificationToken: {
             type: String,
             select: false,
@@ -70,24 +77,21 @@ const userSchema = new Schema<any>(
         timestamps: true,
         toJSON: {
             transform: (_, ret) => {
-                if ((ret as any).password !== undefined) delete (ret as any).password;
-                if ((ret as any).__v !== undefined) delete (ret as any).__v;
+                if ('password' in ret) delete (ret as any).password;
+                if ('__v' in ret) delete (ret as any).__v;
                 return ret;
             },
         },
     }
 );
 
-// Unique/index declared on fields above (unique: true). Avoid duplicate index() calls to silence Mongoose warnings.
-
 userSchema.pre('save', async function (next) {
-    const user: any = this;
-    if (typeof user.isModified === 'function' && !user.isModified('password')) return next();
+    if (!this.isModified('password')) return next();
 
     try {
-        if (user.password) {
+        if (this.password) {
             const salt = await bcrypt.genSalt(12);
-            user.password = await bcrypt.hash(user.password, salt);
+            this.password = await bcrypt.hash(this.password, salt);
         }
         next();
     } catch (error: any) {
@@ -98,13 +102,12 @@ userSchema.pre('save', async function (next) {
 userSchema.methods.comparePassword = async function (
     candidatePassword: string
 ): Promise<boolean> {
-    const user: any = this;
-    if (!user.password) return false;
-    return bcrypt.compare(candidatePassword, user.password);
+    if (!this.password) return false;
+    return bcrypt.compare(candidatePassword, this.password);
 };
 
 userSchema.statics.findByEmail = function (email: string) {
-    return this.findOne({ email: (email as any).toLowerCase() } as any);
+    return this.findOne({ email: email.toLowerCase() });
 };
 
 const User = mongoose.model<IUserDocument, IUserModel>('User', userSchema);
