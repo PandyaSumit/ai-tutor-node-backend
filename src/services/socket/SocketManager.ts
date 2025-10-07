@@ -1,19 +1,34 @@
-// src/services/socket/SocketManager.ts
+// src/services/socket/OptimizedSocketManager.ts
 import { Server as SocketIOServer, Socket } from 'socket.io';
 import { Server as HTTPServer } from 'http';
 import { createAdapter } from '@socket.io/redis-adapter';
 import { createClient } from 'redis';
 import RedisService from '../external/RedisService';
-import MessageQueue from '../queue/MessageQueue';
 import SessionService from '../session/SessionService';
+import EnhancedPythonAPIClient from '../external/PythonAPIClient';
+import { MessageHandler } from './handlers/MessageHandler';
 import logger from '@/config/logger';
 import { verifySocketToken } from '@/middlewares/authMiddleware';
+import { LRUCache } from 'lru-cache';
+
+interface SessionCache {
+    userId: string;
+    status: string;
+    lastActivity: number;
+}
 
 export class SocketManager {
     private io: SocketIOServer;
     private redisService: RedisService;
-    private messageQueue: MessageQueue;
     private sessionService: SessionService;
+    private pythonClient: EnhancedPythonAPIClient;
+    private messageHandler: MessageHandler;
+
+    // In-memory cache for active sessions (reduces DB queries)
+    private sessionCache: LRUCache<string, SessionCache>;
+
+    // Connection pool tracking
+    private activeConnections: Map<string, Set<string>> = new Map(); // userId -> Set<socketId>
 
     constructor(server: HTTPServer) {
         this.io = new SocketIOServer(server, {
@@ -23,22 +38,40 @@ export class SocketManager {
                 methods: ['GET', 'POST']
             },
             transports: ['websocket', 'polling'],
+            upgradeTimeout: 10000,
             pingInterval: 25000,
-            pingTimeout: 60000,
+            pingTimeout: 20000,
             maxHttpBufferSize: 1e6,
-            allowEIO3: true
+            allowEIO3: true,
+            perMessageDeflate: {
+                threshold: 1024,
+                zlibDeflateOptions: {
+                    chunkSize: 8 * 1024
+                }
+            },
+            // Connection state recovery
+            connectionStateRecovery: {
+                maxDisconnectionDuration: 2 * 60 * 1000,
+                skipMiddlewares: true
+            }
+        });
+
+        // Initialize cache
+        this.sessionCache = new LRUCache({
+            max: 10000,
+            ttl: 1000 * 60 * 5, // 5 minutes
+            updateAgeOnGet: true
         });
 
         this.redisService = new RedisService();
-        this.messageQueue = new MessageQueue();
         this.sessionService = new SessionService();
+        this.pythonClient = new EnhancedPythonAPIClient();
+        this.messageHandler = new MessageHandler();
 
         this.setupRedisAdapter();
         this.setupMiddleware();
         this.setupEventHandlers();
-
-        // Link socket manager to message queue
-        this.messageQueue.setSocketManager(this);
+        this.setupMonitoring();
     }
 
     private async setupRedisAdapter() {
@@ -59,10 +92,10 @@ export class SocketManager {
             ]);
 
             this.io.adapter(createAdapter(pubClient, subClient));
-            logger.info('Socket.IO Redis adapter configured');
+            logger.info('✓ Socket.IO Redis adapter configured');
         } catch (error) {
             logger.error('Failed to setup Redis adapter', error);
-            logger.warn('Running Socket.IO without Redis adapter (single server mode)');
+            logger.warn('⚠ Running Socket.IO without Redis adapter (single server mode)');
         }
     }
 
@@ -70,38 +103,49 @@ export class SocketManager {
         // Authentication middleware
         this.io.use(async (socket: Socket, next) => {
             try {
-                const token = socket.handshake.auth.token || socket.handshake.headers.authorization?.split(' ')[1];
+                let rawToken = socket.handshake.auth.token;
+
+                // ✅ handle both string and object cases
+                const token =
+                    typeof rawToken === "string"
+                        ? rawToken
+                        : rawToken?.token ||
+                        socket.handshake.headers.authorization?.split(" ")[1];
+
+                console.log("✅ Extracted token :>>", token);
 
                 if (!token) {
-                    return next(new Error('Authentication token missing'));
+                    return next(new Error("AUTH_TOKEN_MISSING"));
                 }
 
-                const user = await verifySocketToken(token);
+                const user = await verifySocketToken(token); // your jwt.verify logic
                 socket.data.user = user;
+                socket.data.connectedAt = Date.now();
                 next();
             } catch (error) {
-                logger.error('Socket authentication failed', error);
-                next(new Error('Authentication failed'));
+                console.error("Socket authentication failed", error);
+                next(new Error("AUTH_FAILED"));
             }
         });
 
-        // Rate limiting middleware
+
+        // Rate limiting middleware (using sliding window)
         this.io.use(async (socket: Socket, next) => {
             try {
                 const userId = socket.data.user.userId.toString();
                 const limit = await this.redisService.checkRateLimit(
-                    `socket:${userId}`,
-                    100,
+                    `socket:connect:${userId}`,
+                    10, // Max 10 connections per minute
                     60
                 );
 
                 if (!limit.allowed) {
-                    return next(new Error('Rate limit exceeded'));
+                    return next(new Error('RATE_LIMIT_EXCEEDED'));
                 }
                 next();
             } catch (error) {
                 logger.error('Rate limit check failed', error);
-                next();
+                next(); // Allow connection if rate limit check fails
             }
         });
     }
@@ -109,114 +153,174 @@ export class SocketManager {
     private setupEventHandlers() {
         this.io.on('connection', async (socket: Socket) => {
             const userId = socket.data.user.userId.toString();
-            logger.info(`User connected: ${userId} [${socket.id}]`);
+            const socketId = socket.id;
+
+            logger.info(`🔌 User connected: ${userId} [${socketId}]`, {
+                transport: socket.conn.transport.name,
+                recovered: socket.recovered
+            });
+
+            // Track connection
+            if (!this.activeConnections.has(userId)) {
+                this.activeConnections.set(userId, new Set());
+            }
+            this.activeConnections.get(userId)!.add(socketId);
 
             // Join user's personal room
             socket.join(`user:${userId}`);
             await this.redisService.setPresence(userId, 'online');
 
-            // Message handling
+            // Emit connection success with server time for sync
+            socket.emit('connected', {
+                socketId,
+                serverTime: Date.now(),
+                recovered: socket.recovered
+            });
+
+            // === TEXT MESSAGE HANDLERS ===
             socket.on('message:send', async (data: any) => {
-                await this.handleMessage(socket, data);
+                await this.handleWithMetrics('message:send', () =>
+                    this.messageHandler.handleMessage(socket, data)
+                );
             });
 
-            // Typing indicators
-            socket.on('typing:start', async (data: any) => {
-                await this.handleTyping(socket, data, true);
+            // === VOICE MESSAGE HANDLERS ===
+            socket.on('voice:send', async (data: any) => {
+                await this.handleWithMetrics('voice:send', () =>
+                    this.messageHandler.handleVoiceMessage(socket, data)
+                );
             });
 
-            socket.on('typing:stop', async (data: any) => {
-                await this.handleTyping(socket, data, false);
+            // === TYPING INDICATORS ===
+            socket.on('typing:start', (data: any) => {
+                this.handleTyping(socket, data, true);
             });
 
-            // Session management
+            socket.on('typing:stop', (data: any) => {
+                this.handleTyping(socket, data, false);
+            });
+
+            // === SESSION MANAGEMENT ===
+            socket.on('session:join', async (data: any) => {
+                await this.handleSessionJoin(socket, data);
+            });
+
+            socket.on('session:leave', async (data: any) => {
+                await this.handleSessionLeave(socket, data);
+            });
+
             socket.on('session:create', async (data: any) => {
                 await this.handleSessionCreate(socket, data);
-            });
-
-            socket.on('session:resume', async (data: any) => {
-                await this.handleSessionResume(socket, data);
             });
 
             socket.on('session:end', async (data: any) => {
                 await this.handleSessionEnd(socket, data);
             });
 
-            // WebRTC signaling
-            socket.on('webrtc:offer', async (data: any) => {
-                await this.handleWebRTCOffer(socket, data);
+            // === WEBRTC SIGNALING ===
+            socket.on('webrtc:offer', (data: any) => {
+                this.handleWebRTCSignal(socket, 'offer', data);
             });
 
-            socket.on('webrtc:answer', async (data: any) => {
-                await this.handleWebRTCAnswer(socket, data);
+            socket.on('webrtc:answer', (data: any) => {
+                this.handleWebRTCSignal(socket, 'answer', data);
             });
 
-            socket.on('webrtc:ice-candidate', async (data: any) => {
-                await this.handleICECandidate(socket, data);
+            socket.on('webrtc:ice-candidate', (data: any) => {
+                this.handleWebRTCSignal(socket, 'ice-candidate', data);
             });
 
-            socket.on('webrtc:hangup', async (data: any) => {
-                await this.handleWebRTCHangup(socket, data);
+            socket.on('webrtc:hangup', (data: any) => {
+                this.handleWebRTCHangup(socket, data);
             });
 
-            // Disconnect handling
+            // === DISCONNECT HANDLING ===
             socket.on('disconnect', async (reason: string) => {
                 await this.handleDisconnect(socket, reason);
+            });
+
+            // Error handling
+            socket.on('error', (error: Error) => {
+                logger.error('Socket error', { userId, socketId, error });
             });
         });
     }
 
-    private async handleMessage(socket: Socket, data: any): Promise<void> {
+    private async handleWithMetrics(
+        eventName: string,
+        handler: () => Promise<void>
+    ): Promise<void> {
+        const startTime = Date.now();
         try {
-            const { sessionId, content } = data;
-            const userId = socket.data.user.userId.toString();
-
-            // Validate session ownership
-            const session = await this.sessionService.getSession(sessionId);
-            if (!session || session.userId.toString() !== userId) {
-                socket.emit('error', { message: 'Invalid session' });
-                return;
+            await handler();
+            const latency = Date.now() - startTime;
+            if (latency > 1000) {
+                logger.warn(`Slow event handler: ${eventName} took ${latency}ms`);
             }
-
-            // Save user message
-            const message = await this.sessionService.addMessage(
-                sessionId,
-                userId,
-                'user',
-                content
-            );
-
-            // Acknowledge message sent
-            socket.emit('message:sent', {
-                messageId: message._id.toString(),
-                timestamp: message.createdAt
-            });
-
-            // Queue for LLM processing
-            await this.messageQueue.addToLLMQueue({
-                sessionId,
-                userId,
-                messageId: message._id.toString(),
-                content,
-                context: session.contextWindow
-            });
-
-            logger.info(`Message queued for LLM: ${message._id}`);
         } catch (error) {
-            logger.error('Error handling message', error);
-            socket.emit('error', { message: 'Failed to process message' });
+            logger.error(`Error in ${eventName}`, error);
+            throw error;
         }
     }
 
-    private async handleTyping(socket: Socket, data: any, isTyping: boolean): Promise<void> {
+    private handleTyping(socket: Socket, data: any, isTyping: boolean): void {
         const { sessionId } = data;
         const userId = socket.data.user.userId.toString();
 
+        // Broadcast to session without storing
         socket.to(`session:${sessionId}`).emit('typing:status', {
             userId,
             isTyping,
             timestamp: Date.now()
         });
+    }
+
+    private async handleSessionJoin(socket: Socket, data: any): Promise<void> {
+        try {
+            const { sessionId } = data;
+            const userId = socket.data.user.userId.toString();
+
+            // Check cache first
+            let cachedSession = this.sessionCache.get(sessionId);
+
+            if (!cachedSession) {
+                const session = await this.sessionService.getSession(sessionId);
+                if (!session) {
+                    socket.emit('error', { code: 'SESSION_NOT_FOUND' });
+                    return;
+                }
+
+                if (session.userId.toString() !== userId) {
+                    socket.emit('error', { code: 'SESSION_ACCESS_DENIED' });
+                    return;
+                }
+
+                cachedSession = {
+                    userId: session.userId.toString(),
+                    status: session.status,
+                    lastActivity: Date.now()
+                };
+                this.sessionCache.set(sessionId, cachedSession);
+            }
+
+            socket.join(`session:${sessionId}`);
+
+            socket.emit('session:joined', {
+                sessionId,
+                timestamp: Date.now()
+            });
+
+            logger.info(`User ${userId} joined session ${sessionId}`);
+        } catch (error) {
+            logger.error('Error joining session', error);
+            socket.emit('error', { code: 'SESSION_JOIN_ERROR' });
+        }
+    }
+
+    private async handleSessionLeave(socket: Socket, data: any): Promise<void> {
+        const { sessionId } = data;
+        socket.leave(`session:${sessionId}`);
+        socket.emit('session:left', { sessionId });
     }
 
     private async handleSessionCreate(socket: Socket, data: any): Promise<void> {
@@ -230,13 +334,14 @@ export class SocketManager {
                 metadata
             );
 
-            socket.join(`session:${session.sessionId}`);
-
-            await this.redisService.setSession(session.sessionId, {
+            // Cache the new session
+            this.sessionCache.set(session.sessionId, {
                 userId,
-                socketId: socket.id,
-                createdAt: Date.now()
-            }, 3600);
+                status: session.status,
+                lastActivity: Date.now()
+            });
+
+            socket.join(`session:${session.sessionId}`);
 
             socket.emit('session:created', {
                 sessionId: session.sessionId,
@@ -247,38 +352,7 @@ export class SocketManager {
             logger.info(`Session created: ${session.sessionId}`);
         } catch (error) {
             logger.error('Error creating session', error);
-            socket.emit('error', { message: 'Failed to create session' });
-        }
-    }
-
-    private async handleSessionResume(socket: Socket, data: any): Promise<void> {
-        try {
-            const { sessionId } = data;
-            const userId = socket.data.user.userId.toString();
-
-            const session = await this.sessionService.resumeSession(sessionId, userId);
-
-            if (!session) {
-                socket.emit('error', { message: 'Session not found or already ended' });
-                return;
-            }
-
-            socket.join(`session:${sessionId}`);
-
-            const messages = await this.sessionService.getSessionHistory(sessionId, 50);
-
-            socket.emit('session:resumed', {
-                sessionId: session.sessionId,
-                status: session.status,
-                context: session.contextWindow,
-                messageCount: session.metadata.messageCount,
-                messages: messages.reverse() // Chronological order
-            });
-
-            logger.info(`Session resumed: ${sessionId}`);
-        } catch (error) {
-            logger.error('Error resuming session', error);
-            socket.emit('error', { message: 'Failed to resume session' });
+            socket.emit('error', { code: 'SESSION_CREATE_ERROR' });
         }
     }
 
@@ -289,117 +363,84 @@ export class SocketManager {
 
             await this.sessionService.endSession(sessionId, userId);
 
-            socket.leave(`session:${sessionId}`);
-            await this.redisService.deleteSession(sessionId);
+            // Remove from cache
+            this.sessionCache.delete(sessionId);
 
+            socket.leave(`session:${sessionId}`);
             socket.emit('session:ended', { sessionId });
 
             logger.info(`Session ended: ${sessionId}`);
         } catch (error) {
             logger.error('Error ending session', error);
-            socket.emit('error', { message: 'Failed to end session' });
+            socket.emit('error', { code: 'SESSION_END_ERROR' });
         }
     }
 
-    private async handleWebRTCOffer(socket: Socket, data: any): Promise<void> {
-        try {
-            const { sessionId, offer, audioOnly } = data;
-            const userId = socket.data.user.userId.toString();
+    private handleWebRTCSignal(socket: Socket, type: string, data: any): void {
+        const { sessionId, to, ...payload } = data;
+        const userId = socket.data.user.userId.toString();
 
-            logger.info(`WebRTC offer from ${userId} in session ${sessionId}`);
+        const event = `webrtc:${type}`;
+        const message = { from: userId, ...payload };
 
-            // Relay offer to other participants in session
-            socket.to(`session:${sessionId}`).emit('webrtc:offer', {
-                from: userId,
-                offer,
-                audioOnly
-            });
-        } catch (error) {
-            logger.error('Error handling WebRTC offer', error);
-            socket.emit('error', { message: 'Failed to process WebRTC offer' });
+        if (to) {
+            // Send to specific user
+            this.io.to(`user:${to}`).emit(event, message);
+        } else {
+            // Broadcast to session
+            socket.to(`session:${sessionId}`).emit(event, message);
         }
     }
 
-    private async handleWebRTCAnswer(socket: Socket, data: any): Promise<void> {
-        try {
-            const { sessionId, answer, to } = data;
-            const userId = socket.data.user.userId.toString();
+    private handleWebRTCHangup(socket: Socket, data: any): void {
+        const { sessionId } = data;
+        const userId = socket.data.user.userId.toString();
 
-            logger.info(`WebRTC answer from ${userId} in session ${sessionId}`);
-
-            // Send answer to specific peer
-            if (to) {
-                this.io.to(`user:${to}`).emit('webrtc:answer', {
-                    from: userId,
-                    answer
-                });
-            } else {
-                socket.to(`session:${sessionId}`).emit('webrtc:answer', {
-                    from: userId,
-                    answer
-                });
-            }
-        } catch (error) {
-            logger.error('Error handling WebRTC answer', error);
-            socket.emit('error', { message: 'Failed to process WebRTC answer' });
-        }
-    }
-
-    private async handleICECandidate(socket: Socket, data: any): Promise<void> {
-        try {
-            const { sessionId, candidate, to } = data;
-            const userId = socket.data.user.userId.toString();
-
-            // Relay ICE candidate
-            if (to) {
-                this.io.to(`user:${to}`).emit('webrtc:ice-candidate', {
-                    from: userId,
-                    candidate
-                });
-            } else {
-                socket.to(`session:${sessionId}`).emit('webrtc:ice-candidate', {
-                    from: userId,
-                    candidate
-                });
-            }
-        } catch (error) {
-            logger.error('Error handling ICE candidate', error);
-        }
-    }
-
-    private async handleWebRTCHangup(socket: Socket, data: any): Promise<void> {
-        try {
-            const { sessionId } = data;
-            const userId = socket.data.user.userId.toString();
-
-            socket.to(`session:${sessionId}`).emit('webrtc:hangup', {
-                from: userId
-            });
-
-            logger.info(`WebRTC hangup from ${userId} in session ${sessionId}`);
-        } catch (error) {
-            logger.error('Error handling WebRTC hangup', error);
-        }
+        socket.to(`session:${sessionId}`).emit('webrtc:hangup', {
+            from: userId
+        });
     }
 
     private async handleDisconnect(socket: Socket, reason: string): Promise<void> {
         const userId = socket.data.user.userId.toString();
+        const socketId = socket.id;
 
-        await this.redisService.setPresence(userId, 'offline');
-
-        // Get user's active sessions
-        const sessions = await this.redisService.getUserSessions(userId);
-        for (const sessionId of sessions) {
-            socket.leave(`session:${sessionId}`);
-
-            // Notify other participants
-            socket.to(`session:${sessionId}`).emit('user:disconnected', {
-                userId,
-                reason
-            });
+        // Remove from connection tracking
+        const userSockets = this.activeConnections.get(userId);
+        if (userSockets) {
+            userSockets.delete(socketId);
+            if (userSockets.size === 0) {
+                this.activeConnections.delete(userId);
+                await this.redisService.setPresence(userId, 'offline');
+            }
         }
 
-        logger.info(`User disconnected: ${userId} [${socket.id}] - Reason: ${reason}`);
+        const connectionDuration = Date.now() - (socket.data.connectedAt || 0);
+
+        logger.info(`User disconnected: ${userId} [${socketId}]`, {
+            reason,
+            duration: `${(connectionDuration / 1000).toFixed(2)}s`,
+            remainingConnections: userSockets?.size || 0
+        });
+    }
+
+    private setupMonitoring() {
+        // Monitor Python API health
+        this.pythonClient.on('health', (isHealthy: boolean) => {
+            if (!isHealthy) {
+                logger.error('Python API is unhealthy');
+                this.io.emit('system:alert', {
+                    type: 'service_degraded',
+                    message: 'AI service experiencing issues'
+                });
+            }
+        });
+
+        // Log metrics every 5 minutes
+        setInterval(() => {
+            const metrics = this.getMetrics();
+            logger.info('Socket.IO Metrics', metrics);
+        }, 5 * 60 * 1000);
     }
 
     // Public methods for external use
@@ -415,13 +456,31 @@ export class SocketManager {
         this.io.emit(event, data);
     }
 
+    public getMetrics() {
+        const totalConnections = Array.from(this.activeConnections.values())
+            .reduce((sum, sockets) => sum + sockets.size, 0);
+
+        return {
+            totalConnections,
+            uniqueUsers: this.activeConnections.size,
+            cachedSessions: this.sessionCache.size,
+            pythonAPIHealthy: this.pythonClient.getHealthStatus()
+        };
+    }
+
     public async getConnectedUsers(): Promise<number> {
-        const sockets = await this.io.fetchSockets();
-        return sockets.length;
+        return this.activeConnections.size;
     }
 
     public async getUserSocketIds(userId: string): Promise<string[]> {
-        const sockets = await this.io.in(`user:${userId}`).fetchSockets();
-        return sockets.map(s => s.id);
+        return Array.from(this.activeConnections.get(userId) || []);
+    }
+
+    public async shutdown(): Promise<void> {
+        logger.info('Shutting down SocketManager...');
+        await this.pythonClient.shutdown();
+        this.sessionCache.clear();
+        this.activeConnections.clear();
+        this.io.close();
     }
 }

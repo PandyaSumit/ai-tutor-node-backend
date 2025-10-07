@@ -93,15 +93,19 @@ export const optionalAuth = async (
 
 export async function verifySocketToken(token: string): Promise<IJWTPayload> {
     try {
-
-        const decoded = jwt.verify(token, process.env.JWT_SECRET!);
+        const decoded = jwt.verify(
+            token,
+            process.env.JWT_ACCESS_SECRET!
+        );
 
         if (typeof decoded === 'object' && decoded !== null && 'userId' in decoded) {
             const userId = (decoded as any).userId as string;
 
             const user: IUser | null = await User.findById(userId).select('email role isActive');
 
-            if (!user || !user.isActive) throw new Error('User not found or inactive');
+            if (!user || !user.isActive) {
+                throw new Error('User not found or inactive');
+            }
 
             return {
                 userId: user._id,
@@ -113,6 +117,7 @@ export async function verifySocketToken(token: string): Promise<IJWTPayload> {
         }
 
     } catch (error) {
+        console.error('Socket token verification failed:', error);
         throw new Error('Invalid token');
     }
 }

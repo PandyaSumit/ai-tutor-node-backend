@@ -13,7 +13,6 @@ export class SessionController {
     async createSession(req: Request, res: Response): Promise<Response> {
         try {
             const userId = (req as AuthRequest).user?.userId;
-            console.log('userId: ', userId);
 
             if (!userId) {
                 return res.status(401).json({
