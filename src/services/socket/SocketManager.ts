@@ -103,36 +103,67 @@ export class SocketManager {
         // Authentication middleware
         this.io.use(async (socket: Socket, next) => {
             try {
-                let rawToken = socket.handshake.auth.token;
+                // ✅ FIX: Handle both direct token string and object with token property
+                let token: string | undefined;
 
-                // ✅ handle both string and object cases
-                const token =
-                    typeof rawToken === "string"
-                        ? rawToken
-                        : rawToken?.token ||
-                        socket.handshake.headers.authorization?.split(" ")[1];
+                const authData = socket.handshake.auth;
 
-                console.log("✅ Extracted token :>>", token);
-
-                if (!token) {
-                    return next(new Error("AUTH_TOKEN_MISSING"));
+                // Case 1: Direct token string
+                if (typeof authData.token === 'string') {
+                    token = authData.token;
+                }
+                // Case 2: Nested token object (shouldn't happen but handle it)
+                else if (authData.token && typeof authData.token === 'object' && 'token' in authData.token) {
+                    token = (authData.token as any).token;
+                }
+                // Case 3: Token in headers (fallback)
+                else if (socket.handshake.headers.authorization) {
+                    const authHeader = socket.handshake.headers.authorization;
+                    token = authHeader.startsWith('Bearer ') ? authHeader.substring(7) : authHeader;
                 }
 
-                const user = await verifySocketToken(token); // your jwt.verify logic
+                console.log('🔐 Socket auth attempt:', {
+                    hasAuthData: !!authData,
+                    authType: typeof authData.token,
+                    hasToken: !!token,
+                    headers: socket.handshake.headers.authorization ? 'present' : 'missing'
+                });
+
+                if (!token) {
+                    console.error('❌ No token provided in socket handshake');
+                    return next(new Error('AUTH_TOKEN_MISSING'));
+                }
+
+                // Verify the token
+                const user = await verifySocketToken(token);
+
+                // Store user data in socket
                 socket.data.user = user;
                 socket.data.connectedAt = Date.now();
+
+                console.log('✅ Socket authenticated:', {
+                    userId: user.userId,
+                    email: user.email,
+                    role: user.role
+                });
+
                 next();
             } catch (error) {
-                console.error("Socket authentication failed", error);
-                next(new Error("AUTH_FAILED"));
+                console.error('❌ Socket authentication failed:', error);
+                const errorMessage = error instanceof Error ? error.message : 'AUTH_FAILED';
+                next(new Error(errorMessage));
             }
         });
-
 
         // Rate limiting middleware (using sliding window)
         this.io.use(async (socket: Socket, next) => {
             try {
-                const userId = socket.data.user.userId.toString();
+                const userId = socket.data.user?.userId?.toString();
+
+                if (!userId) {
+                    return next(new Error('USER_NOT_FOUND'));
+                }
+
                 const limit = await this.redisService.checkRateLimit(
                     `socket:connect:${userId}`,
                     10, // Max 10 connections per minute
@@ -140,8 +171,10 @@ export class SocketManager {
                 );
 
                 if (!limit.allowed) {
+                    console.warn(`⚠️ Rate limit exceeded for user: ${userId}`);
                     return next(new Error('RATE_LIMIT_EXCEEDED'));
                 }
+
                 next();
             } catch (error) {
                 logger.error('Rate limit check failed', error);

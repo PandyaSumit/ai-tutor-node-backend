@@ -50,5 +50,4 @@ const SessionSchema = new Schema<ISession>(
 SessionSchema.index({ userId: 1, status: 1 });
 SessionSchema.index({ 'metadata.lastActivity': 1 });
 
-// ✅ FIX: Explicitly set model type
 export default mongoose.model<ISession>('Session', SessionSchema);

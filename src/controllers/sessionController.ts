@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import SessionService from '@/services/session/SessionService';
 import logger from '@/config/logger';
-import { AuthRequest } from '@/types'; // Import your AuthRequest type
+import { AuthRequest } from '@/types';
 
 export class SessionController {
     private sessionService: SessionService;
@@ -29,7 +29,7 @@ export class SessionController {
                 metadata
             );
 
-            return res.status(201).json({  // Add return here
+            return res.status(201).json({
                 success: true,
                 data: {
                     session: {
@@ -43,7 +43,7 @@ export class SessionController {
             });
         } catch (error) {
             logger.error('Create session error:', error);
-            return res.status(500).json({  // Add return here
+            return res.status(500).json({
                 success: false,
                 message: 'Failed to create session'
             });
@@ -71,7 +71,7 @@ export class SessionController {
             const endIndex = startIndex + Number(limit);
             const paginatedSessions = sessions.slice(startIndex, endIndex);
 
-            return res.json({  // Add return here
+            return res.json({
                 success: true,
                 data: {
                     sessions: paginatedSessions,
@@ -85,7 +85,7 @@ export class SessionController {
             });
         } catch (error) {
             logger.error('Get sessions error:', error);
-            return res.status(500).json({  // Add return here
+            return res.status(500).json({
                 success: false,
                 message: 'Failed to get sessions'
             });
@@ -95,7 +95,7 @@ export class SessionController {
     async getSession(req: Request, res: Response): Promise<Response> {
         try {
             const { sessionId } = req.params;
-            const userId = (req as AuthRequest).user?.userId; // FIXED
+            const userId = (req as AuthRequest).user?.userId;
 
             if (!userId) {
                 return res.status(401).json({
@@ -137,7 +137,7 @@ export class SessionController {
     async resumeSession(req: Request, res: Response): Promise<Response> {
         try {
             const { sessionId } = req.params;
-            const userId = (req as AuthRequest).user?.userId; // FIXED
+            const userId = (req as AuthRequest).user?.userId;
 
             if (!userId) {
                 return res.status(401).json({
@@ -171,10 +171,10 @@ export class SessionController {
         }
     }
 
-    async endSession(req: Request, res: Response): Promise<Response> { // Added return type
+    async endSession(req: Request, res: Response): Promise<Response> {
         try {
             const { sessionId } = req.params;
-            const userId = (req as AuthRequest).user?.userId; // FIXED
+            const userId = (req as AuthRequest).user?.userId;
 
             if (!userId) {
                 return res.status(401).json({
@@ -221,13 +221,13 @@ export class SessionController {
                     : 0
             };
 
-            return res.json({  // Add return here
+            return res.json({
                 success: true,
                 data: { stats }
             });
         } catch (error) {
             logger.error('Get stats error:', error);
-            return res.status(500).json({  // Add return here
+            return res.status(500).json({
                 success: false,
                 message: 'Failed to get statistics'
             });
