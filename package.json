@@ -10,7 +10,8 @@
     "lint": "eslint . --ext .ts",
     "test": "jest --coverage",
     "create-admin": "ts-node -r tsconfig-paths/register scripts/createAdmin.ts",
-    "test-login": "ts-node -r tsconfig-paths/register scripts/testLogin.ts"
+    "test-login": "ts-node -r tsconfig-paths/register scripts/testLogin.ts",
+    "debug-admin": "ts-node -r tsconfig-paths/register scripts/debugAdmin.ts"
   },
   "dependencies": {
     "@socket.io/redis-adapter": "^8.3.0",
