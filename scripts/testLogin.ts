@@ -5,7 +5,8 @@ import path from 'path';
 
 dotenv.config({ path: path.join(__dirname, '../.env') });
 
-const API_URL = process.env.API_URL || 'http://localhost:5000';
+const PORT = process.env.PORT || 5000;
+const API_URL = `http://localhost:${PORT}`;
 
 async function testAdminLogin() {
     try {

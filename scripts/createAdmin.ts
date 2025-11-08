@@ -3,6 +3,7 @@ import mongoose from 'mongoose';
 import bcrypt from 'bcryptjs';
 import dotenv from 'dotenv';
 import path from 'path';
+import User from '../src/models/User';
 
 // Load environment variables
 dotenv.config({ path: path.join(__dirname, '../.env') });
@@ -19,9 +20,6 @@ async function createAdminUser() {
         console.log('🔌 Connecting to MongoDB...');
         await mongoose.connect(MONGODB_URI);
         console.log('✅ Connected to MongoDB\n');
-
-        // Get User model
-        const User = mongoose.model('User');
 
         // Check if admin already exists
         const existingAdmin = await User.findOne({ email: ADMIN_EMAIL });
