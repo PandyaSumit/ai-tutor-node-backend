@@ -9,6 +9,7 @@ export interface IBlog {
     content: string;
     excerpt: string;
     author: string;
+    authorId?: string; // Reference to User model
     publishedAt: Date;
     updatedAt?: Date;
     tags: string[];
@@ -17,7 +18,19 @@ export interface IBlog {
     featured: boolean;
     readingTime: string;
     tableOfContents?: ITOCItem[];
-    published: boolean;
+    published: boolean; // false = draft, true = published
+    series?: {
+        name: string;
+        order: number;
+    };
+    seo?: {
+        metaTitle?: string;
+        metaDescription?: string;
+        keywords?: string[];
+        canonicalUrl?: string;
+    };
+    views: number;
+    likes: number;
     createdAt?: Date;
 }
 
@@ -87,6 +100,11 @@ const blogSchema = new Schema<IBlogDocument>(
             required: [true, 'Author is required'],
             trim: true,
         },
+        authorId: {
+            type: Schema.Types.ObjectId,
+            ref: 'User',
+            index: true,
+        },
         publishedAt: {
             type: Date,
             required: true,
@@ -123,8 +141,26 @@ const blogSchema = new Schema<IBlogDocument>(
         },
         published: {
             type: Boolean,
-            default: true,
+            default: false, // Default to draft
             index: true,
+        },
+        series: {
+            name: { type: String, trim: true },
+            order: { type: Number, default: 1 },
+        },
+        seo: {
+            metaTitle: { type: String, trim: true },
+            metaDescription: { type: String, trim: true },
+            keywords: [{ type: String, trim: true }],
+            canonicalUrl: { type: String, trim: true },
+        },
+        views: {
+            type: Number,
+            default: 0,
+        },
+        likes: {
+            type: Number,
+            default: 0,
         },
     },
     {
