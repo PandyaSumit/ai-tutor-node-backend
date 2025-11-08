@@ -13,6 +13,8 @@ import authRoutes from './routes/authRoutes';
 import healthRoutes from './routes/healthRoutes';
 import sessionRoutes from './routes/sessionRoutes';
 import messageRoutes from './routes/messageRoutes';
+import blogRoutes from './routes/blogRoutes';
+import adminBlogRoutes from './routes/adminBlogRoutes';
 import {
     helmetMiddleware,
     corsMiddleware,
@@ -144,6 +146,8 @@ async function startServer() {
     app.use('/api/auth', authRoutes);
     app.use('/api/sessions', sessionRoutes);
     app.use('/api/messages', messageRoutes);
+    app.use('/api/blog', blogRoutes);
+    app.use('/api/admin/blog', adminBlogRoutes);
 
     // Error handling
     app.use(notFoundHandler);
