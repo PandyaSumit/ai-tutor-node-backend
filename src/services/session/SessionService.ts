@@ -121,20 +121,40 @@ export default class SessionService {
 
     async getSessionHistory(
         sessionId: string,
-        limit: number = 50
-    ): Promise<IMessageData[]> {
-        const session = await Session.findOne({ sessionId });
+        limit: number = 50,
+        offset: number = 0
+    ): Promise<{ messages: IMessageData[]; total: number; hasMore: boolean }> {
+        const session = await Session.findOne({ sessionId }).select('_id').lean();
 
         if (!session) {
             throw new Error('Session not found');
         }
 
-        const messages = await Message.find({ sessionId: session._id })
-            .sort({ createdAt: -1 })
-            .limit(limit)
-            .lean<IMessageData[]>();
+        // ✅ Single aggregation query
+        const [result] = await Message.aggregate([
+            { $match: { sessionId: session._id } },
+            {
+                $facet: {
+                    messages: [
+                        { $sort: { createdAt: -1 } },
+                        { $skip: offset },
+                        { $limit: limit }
+                    ],
+                    totalCount: [
+                        { $count: 'count' }
+                    ]
+                }
+            }
+        ]);
 
-        return messages;
+        const total = result.totalCount[0]?.count || 0;
+        const messages = result.messages;
+
+        return {
+            messages,
+            total,
+            hasMore: offset + limit < total
+        };
     }
 
     async getUserSessions(

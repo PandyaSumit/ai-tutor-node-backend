@@ -1,3 +1,4 @@
+// src/controllers/sessionController.ts - COMPLETE FIXED VERSION
 import { Request, Response } from 'express';
 import SessionService from '@/services/session/SessionService';
 import logger from '@/config/logger';
@@ -12,22 +13,32 @@ export class SessionController {
 
     async createSession(req: Request, res: Response): Promise<Response> {
         try {
-            const userId = (req as AuthRequest).user?.userId;
+            const authReq = req as AuthRequest;
 
-            if (!userId) {
+            if (!authReq.user?.userId) {
                 return res.status(401).json({
                     success: false,
                     message: 'User not authenticated'
                 });
             }
 
+            const userId = authReq.user.userId;
             const { topic, metadata } = req.body;
+
+            if (topic && typeof topic !== 'string') {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Topic must be a string'
+                });
+            }
 
             const session = await this.sessionService.createSession(
                 userId,
                 topic,
                 metadata
             );
+
+            logger.info(`Session created: ${session.sessionId} by user: ${userId}`);
 
             return res.status(201).json({
                 success: true,
@@ -52,23 +63,27 @@ export class SessionController {
 
     async getUserSessions(req: Request, res: Response): Promise<Response> {
         try {
-            const userId = (req as AuthRequest).user?.userId;
-            const { status, limit = 20, page = 1 } = req.query;
+            const authReq = req as AuthRequest;
 
-            if (!userId) {
+            if (!authReq.user?.userId) {
                 return res.status(401).json({
                     success: false,
                     message: 'User not authenticated'
                 });
             }
 
+            const userId = authReq.user.userId;
+            const { status, limit = '20', page = '1' } = req.query;
+
             const sessions = await this.sessionService.getUserSessions(
                 userId,
                 status as string
             );
 
-            const startIndex = (Number(page) - 1) * Number(limit);
-            const endIndex = startIndex + Number(limit);
+            const pageNum = Number(page);
+            const limitNum = Number(limit);
+            const startIndex = (pageNum - 1) * limitNum;
+            const endIndex = startIndex + limitNum;
             const paginatedSessions = sessions.slice(startIndex, endIndex);
 
             return res.json({
@@ -77,9 +92,9 @@ export class SessionController {
                     sessions: paginatedSessions,
                     pagination: {
                         total: sessions.length,
-                        page: Number(page),
-                        limit: Number(limit),
-                        pages: Math.ceil(sessions.length / Number(limit))
+                        page: pageNum,
+                        limit: limitNum,
+                        pages: Math.ceil(sessions.length / limitNum)
                     }
                 }
             });
@@ -95,14 +110,16 @@ export class SessionController {
     async getSession(req: Request, res: Response): Promise<Response> {
         try {
             const { sessionId } = req.params;
-            const userId = (req as AuthRequest).user?.userId;
+            const authReq = req as AuthRequest;
 
-            if (!userId) {
+            if (!authReq.user?.userId) {
                 return res.status(401).json({
                     success: false,
                     message: 'User not authenticated'
                 });
             }
+
+            const userId = authReq.user.userId;
 
             const session = await this.sessionService.getSession(sessionId);
 
@@ -137,14 +154,16 @@ export class SessionController {
     async resumeSession(req: Request, res: Response): Promise<Response> {
         try {
             const { sessionId } = req.params;
-            const userId = (req as AuthRequest).user?.userId;
+            const authReq = req as AuthRequest;
 
-            if (!userId) {
+            if (!authReq.user?.userId) {
                 return res.status(401).json({
                     success: false,
                     message: 'User not authenticated'
                 });
             }
+
+            const userId = authReq.user.userId;
 
             const session = await this.sessionService.resumeSession(
                 sessionId,
@@ -174,14 +193,16 @@ export class SessionController {
     async endSession(req: Request, res: Response): Promise<Response> {
         try {
             const { sessionId } = req.params;
-            const userId = (req as AuthRequest).user?.userId;
+            const authReq = req as AuthRequest;
 
-            if (!userId) {
+            if (!authReq.user?.userId) {
                 return res.status(401).json({
                     success: false,
                     message: 'User not authenticated'
                 });
             }
+
+            const userId = authReq.user.userId;
 
             await this.sessionService.endSession(sessionId, userId);
 
@@ -200,14 +221,16 @@ export class SessionController {
 
     async getSessionStats(req: Request, res: Response): Promise<Response> {
         try {
-            const userId = (req as AuthRequest).user?.userId;
+            const authReq = req as AuthRequest;
 
-            if (!userId) {
+            if (!authReq.user?.userId) {
                 return res.status(401).json({
                     success: false,
                     message: 'User not authenticated'
                 });
             }
+
+            const userId = authReq.user.userId;
 
             const sessions = await this.sessionService.getUserSessions(userId);
 

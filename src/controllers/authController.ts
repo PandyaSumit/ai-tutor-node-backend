@@ -7,6 +7,7 @@ import apiResponse from '@/utils/apiResponse';
 import { AuthRequest, UserRole } from '@/types';
 import crypto from 'crypto';
 import { asyncHandler } from '@/middlewares/errorMiddleware';
+import mongoose from 'mongoose';
 
 class AuthController {
     signup = asyncHandler(async (req: Request, res: Response) => {
@@ -27,7 +28,6 @@ class AuthController {
             isEmailVerified: false,
         });
 
-        // Generate email verification token
         const verificationToken = crypto.randomUUID();
         const verificationExpires = new Date();
         verificationExpires.setHours(verificationExpires.getHours() + 24); // 24 hours
@@ -126,34 +126,43 @@ class AuthController {
             const deviceInfo = req.headers['user-agent'] || 'Unknown Device';
             const ipAddress = req.ip || 'Unknown IP';
 
-            // Rotate refresh token
-            const newRefreshToken = await jwtService.rotateRefreshToken(
-                refreshToken,
-                deviceInfo,
-                ipAddress
-            );
+            // ✅ Use transaction to ensure atomicity
+            const session = await mongoose.startSession();
+            session.startTransaction();
 
-            // Get user info
-            const userId = await jwtService.verifyRefreshToken(newRefreshToken);
-            const user = await User.findById(userId);
+            try {
+                const userId = await jwtService.verifyRefreshToken(refreshToken);
 
-            if (!user) {
-                return apiResponse.unauthorized(res, 'User not found');
+                const user = await User.findById(userId).session(session);
+                if (!user) {
+                    await session.abortTransaction();
+                    cookieHelper.clearTokens(res);
+                    return apiResponse.unauthorized(res, 'User not found');
+                }
+
+                const newRefreshToken = await jwtService.rotateRefreshToken(
+                    refreshToken,
+                    deviceInfo,
+                    ipAddress,
+                    session
+                );
+
+                const accessToken = jwtService.generateAccessToken(
+                    String(user._id),
+                    user.email,
+                    user.role
+                );
+
+                await session.commitTransaction();
+
+                cookieHelper.setTokens(res, accessToken, newRefreshToken);
+                apiResponse.success(res, 'Token refreshed successfully', { accessToken });
+            } catch (error) {
+                await session.abortTransaction();
+                throw error;
+            } finally {
+                session.endSession();
             }
-
-            // Generate new access token
-            const accessToken = jwtService.generateAccessToken(
-                String(user._id),
-                user.email,
-                user.role
-            );
-
-            // Set new cookies
-            cookieHelper.setTokens(res, accessToken, newRefreshToken);
-
-            apiResponse.success(res, 'Token refreshed successfully', {
-                accessToken,
-            });
         } catch (error: any) {
             cookieHelper.clearTokens(res);
             return apiResponse.unauthorized(res, error.message || 'Invalid refresh token');

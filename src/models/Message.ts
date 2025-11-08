@@ -52,5 +52,7 @@ const MessageSchema = new Schema<IMessage>(
 // Compound index for efficient queries
 MessageSchema.index({ sessionId: 1, createdAt: -1 });
 MessageSchema.index({ userId: 1, createdAt: -1 });
+MessageSchema.index({ content: 'text' });
+MessageSchema.index({ userId: 1, sessionId: 1, createdAt: -1 });
 
 export default mongoose.model<IMessage>('Message', MessageSchema);

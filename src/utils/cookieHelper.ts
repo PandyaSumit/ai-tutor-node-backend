@@ -7,25 +7,28 @@ export const COOKIE_NAMES = {
 } as const;
 
 class CookieHelper {
-
     private getAccessTokenOptions() {
+        const isProduction = config.nodeEnv === 'production';
+
         return {
-            httpOnly: true,
+            httpOnly: false,
             secure: config.cookie.secure,
-            sameSite: config.cookie.sameSite,
-            domain: config.cookie.domain,
+            sameSite: config.cookie.sameSite as 'strict' | 'lax' | 'none',
+            domain: isProduction ? config.cookie.domain : undefined,
             maxAge: 15 * 60 * 1000,
             path: '/',
         };
     }
 
     private getRefreshTokenOptions() {
+        const isProduction = config.nodeEnv === 'production';
+
         return {
             httpOnly: true,
             secure: config.cookie.secure,
-            sameSite: config.cookie.sameSite,
-            domain: config.cookie.domain,
-            maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days in milliseconds
+            sameSite: config.cookie.sameSite as 'strict' | 'lax' | 'none',
+            domain: isProduction ? config.cookie.domain : undefined,
+            maxAge: 7 * 24 * 60 * 60 * 1000,
             path: '/',
         };
     }
@@ -44,21 +47,25 @@ class CookieHelper {
     }
 
     clearAccessToken(res: Response): void {
+        const isProduction = config.nodeEnv === 'production';
+
         res.clearCookie(COOKIE_NAMES.ACCESS_TOKEN, {
             httpOnly: true,
             secure: config.cookie.secure,
-            sameSite: config.cookie.sameSite,
-            domain: config.cookie.domain,
+            sameSite: config.cookie.sameSite as 'strict' | 'lax' | 'none',
+            domain: isProduction ? config.cookie.domain : undefined,
             path: '/',
         });
     }
 
     clearRefreshToken(res: Response): void {
+        const isProduction = config.nodeEnv === 'production';
+
         res.clearCookie(COOKIE_NAMES.REFRESH_TOKEN, {
             httpOnly: true,
             secure: config.cookie.secure,
-            sameSite: config.cookie.sameSite,
-            domain: config.cookie.domain,
+            sameSite: config.cookie.sameSite as 'strict' | 'lax' | 'none',
+            domain: isProduction ? config.cookie.domain : undefined,
             path: '/',
         });
     }

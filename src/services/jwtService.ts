@@ -1,8 +1,10 @@
+// src/services/jwtService.ts - Updated with session support
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import config from '@/config/env';
 import { IJWTPayload, TokenPair, UserRole } from '@/types';
 import RefreshToken from '@/models/RefreshToken';
+import mongoose from 'mongoose';
 
 class JWTService {
 
@@ -52,7 +54,8 @@ class JWTService {
     async createRefreshToken(
         userId: string,
         deviceInfo: string,
-        ipAddress: string
+        ipAddress: string,
+        session?: mongoose.ClientSession // ✅ Added session support
     ): Promise<string> {
         const token = this.generateRefreshToken();
         const expiresAt = new Date();
@@ -66,20 +69,30 @@ class JWTService {
             expiresAt.setHours(expiresAt.getHours() + expiryValue);
         }
 
-        await RefreshToken.create({
-            userId,
-            token,
-            deviceInfo,
-            ipAddress,
-            expiresAt,
-            isRevoked: false,
-        });
+        // ✅ Create with session if provided
+        await RefreshToken.create(
+            [
+                {
+                    userId,
+                    token,
+                    deviceInfo,
+                    ipAddress,
+                    expiresAt,
+                    isRevoked: false,
+                }
+            ],
+            session ? { session } : {}
+        );
 
         return token;
     }
 
-    async verifyRefreshToken(token: string): Promise<string> {
-        const refreshToken = await RefreshToken.findByToken(token);
+    async verifyRefreshToken(
+        token: string,
+        session?: mongoose.ClientSession // ✅ Added session support
+    ): Promise<string> {
+        // ✅ Pass session to findByToken
+        const refreshToken = await RefreshToken.findByToken(token, session);
 
         if (!refreshToken) {
             throw new Error('Invalid refresh token');
@@ -99,23 +112,33 @@ class JWTService {
     async rotateRefreshToken(
         oldToken: string,
         deviceInfo: string,
-        ipAddress: string
+        ipAddress: string,
+        session?: mongoose.ClientSession // ✅ Added session support
     ): Promise<string> {
-        const userId = await this.verifyRefreshToken(oldToken);
+        // ✅ Verify with session
+        const userId = await this.verifyRefreshToken(oldToken, session);
 
-        await RefreshToken.revokeToken(oldToken);
+        // ✅ Revoke with session
+        await RefreshToken.revokeToken(oldToken, session);
 
-        const newToken = await this.createRefreshToken(userId, deviceInfo, ipAddress);
+        // ✅ Create new token with session
+        const newToken = await this.createRefreshToken(userId, deviceInfo, ipAddress, session);
 
         return newToken;
     }
 
-    async revokeAllUserTokens(userId: string): Promise<void> {
-        await RefreshToken.revokeAllUserTokens(userId);
+    async revokeAllUserTokens(
+        userId: string,
+        session?: mongoose.ClientSession // ✅ Added session support
+    ): Promise<void> {
+        await RefreshToken.revokeAllUserTokens(userId, session);
     }
 
-    async revokeToken(token: string): Promise<void> {
-        await RefreshToken.revokeToken(token);
+    async revokeToken(
+        token: string,
+        session?: mongoose.ClientSession // ✅ Added session support
+    ): Promise<void> {
+        await RefreshToken.revokeToken(token, session);
     }
 
     async generateTokenPair(
@@ -129,6 +152,42 @@ class JWTService {
         const refreshToken = await this.createRefreshToken(userId, deviceInfo, ipAddress);
 
         return { accessToken, refreshToken };
+    }
+
+    /**
+     * ✅ NEW: Get all active sessions for a user
+     */
+    async getUserSessions(userId: string): Promise<any[]> {
+        return await RefreshToken.find({
+            userId,
+            isRevoked: false,
+            expiresAt: { $gt: new Date() },
+        })
+            .select('deviceInfo ipAddress createdAt')
+            .sort({ createdAt: -1 })
+            .lean();
+    }
+
+    /**
+     * ✅ NEW: Revoke specific session
+     */
+    async revokeSession(userId: string, sessionId: string): Promise<void> {
+        await RefreshToken.updateOne(
+            { _id: sessionId, userId },
+            { isRevoked: true }
+        );
+    }
+
+    /**
+     * ✅ NEW: Decode token without verification (use cautiously)
+     */
+    decodeToken(token: string): IJWTPayload | null {
+        try {
+            const decoded = jwt.decode(token) as IJWTPayload;
+            return decoded;
+        } catch {
+            return null;
+        }
     }
 }
 

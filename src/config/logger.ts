@@ -104,6 +104,7 @@ export const logInfo = (message: string, meta?: any) => {
 };
 
 export const logError = (message: string, error?: Error | any) => {
+    console.log('error :>> ', error);
     if (error instanceof Error) {
         logger.error(message, { error: error.message, stack: error.stack });
     } else {

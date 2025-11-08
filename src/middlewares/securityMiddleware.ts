@@ -6,6 +6,9 @@ import config from '@/config/env';
 import { Request, Response, NextFunction } from 'express';
 import apiResponse from '@/utils/apiResponse';
 
+// ========================================
+// Helmet - Security Headers
+// ========================================
 export const helmetMiddleware = helmet({
     contentSecurityPolicy: {
         directives: {
@@ -22,6 +25,9 @@ export const helmetMiddleware = helmet({
     },
 });
 
+// ========================================
+// CORS Configuration
+// ========================================
 export const corsMiddleware = cors({
     origin: (origin, callback) => {
         const allowedOrigins = [config.cors.origin, config.frontendUrl];
@@ -42,44 +48,134 @@ export const corsMiddleware = cors({
     maxAge: 86400, // 24 hours
 });
 
+// ========================================
+// Rate Limiters (Industry Standard)
+// ========================================
+
+/**
+ * Strict Auth Rate Limiter
+ * For login/signup endpoints
+ * Industry Standard: 10-20 attempts per 15 minutes
+ */
 export const authRateLimiter = rateLimit({
     windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 5, // 5 requests per window
+    max: 10, // ✅ Increased from 5 to 10 (industry standard)
     message: 'Too many authentication attempts, please try again later',
     standardHeaders: true,
     legacyHeaders: false,
-    handler: (_req: Request, res: Response) => {
-        apiResponse.error(res, 'Too many requests, please try again later', 429);
+    skipSuccessfulRequests: true,
+    keyGenerator: (req: Request) => {
+        return `${req.ip}-${req.headers['user-agent'] || 'unknown'}`;
+    },
+    handler: (req: Request, res: Response) => {
+        // const retryAfter = req.rateLimit?.resetTime
+        //     ? Math.ceil(req.rateLimit.resetTime.getTime() / 1000)
+        //     : 60;
+        const retryAfter = req.rateLimit?.resetTime
+            ? Math.ceil((req.rateLimit.resetTime.getTime() - Date.now()) / 1000)
+            : 60;
+        res.setHeader('Retry-After', retryAfter);
+        apiResponse.error(
+            res,
+            'Too many login attempts. Please try again later.',
+            429
+        );
+    },
+    // Skip rate limit for successful auth (optional)
+    skip: (req: Request) => {
+        // Skip if authenticated (has valid token)
+        const token = req.cookies?.accessToken || req.headers.authorization;
+        return !!token;
     },
 });
 
+/**
+ * Strict Rate Limiter for Password Reset
+ * Prevents brute force password reset attacks
+ */
+export const passwordResetRateLimiter = rateLimit({
+    windowMs: 60 * 60 * 1000, // 1 hour
+    max: 3, // Only 3 attempts per hour
+    message: 'Too many password reset attempts',
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req: Request) => {
+        // Rate limit by email if provided, else by IP
+        const email = req.body?.email;
+        return email ? `reset-${email}` : `reset-ip-${req.ip}`;
+    },
+    handler: (_req: Request, res: Response) => {
+        apiResponse.error(
+            res,
+            'Too many password reset requests. Please try again later.',
+            429
+        );
+    },
+});
+
+/**
+ * General API Rate Limiter
+ * For all other endpoints
+ * Industry Standard: 100-1000 requests per 15 minutes
+ */
 export const generalRateLimiter = rateLimit({
-    windowMs: config.rateLimit.windowMs,
-    max: config.rateLimit.maxRequests,
+    windowMs: config.rateLimit.windowMs || 15 * 60 * 1000,
+    max: config.rateLimit.maxRequests || 100,
     message: 'Too many requests from this IP, please try again later',
     standardHeaders: true,
     legacyHeaders: false,
+    // Don't rate limit authenticated users as strictly
+    skip: (req: Request) => {
+        // Skip for authenticated requests with valid tokens
+        const token = req.cookies?.accessToken || req.headers.authorization;
+        return !!token;
+    },
     handler: (_req: Request, res: Response) => {
         apiResponse.error(res, 'Rate limit exceeded', 429);
     },
 });
 
-// Create an instance of the sanitizer middleware and wrap it to avoid
-// throwing if the request object has read-only properties in some environments.
+/**
+ * Aggressive Rate Limiter for Sensitive Operations
+ * For operations like change password, delete account
+ */
+export const sensitiveOperationRateLimiter = rateLimit({
+    windowMs: 60 * 60 * 1000, // 1 hour
+    max: 5, // 5 attempts per hour
+    message: 'Too many sensitive operation attempts',
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req: Request) => {
+        // Rate limit per user if authenticated
+        const userId = (req as any).user?.userId;
+        return userId ? `sensitive-${userId}` : `sensitive-ip-${req.ip}`;
+    },
+    handler: (_req: Request, res: Response) => {
+        apiResponse.error(
+            res,
+            'Too many attempts. Please try again later.',
+            429
+        );
+    },
+});
+
+// ========================================
+// MongoDB Sanitization
+// ========================================
 const _mongoSanitize = mongoSanitize({
     replaceWith: '_',
     onSanitize: ({ req, key }) => {
-        // avoid accessing req properties directly in case they're implemented as getters only
         const ip = (req && (req as any).ip) || 'unknown';
-        console.warn(`Sanitized key: ${key} in request from ${ip}`);
+        console.warn(`⚠️ Sanitized key: ${key} in request from ${ip}`);
     },
 });
 
 function ensureMutableProps(target: any, props: string[]) {
     for (const prop of props) {
         try {
-            const desc = Object.getOwnPropertyDescriptor(target, prop) || Object.getOwnPropertyDescriptor(Object.getPrototypeOf(target) || {}, prop);
-            // if descriptor exists and is not writable (getter-only), replace with an own-writable copy
+            const desc = Object.getOwnPropertyDescriptor(target, prop) ||
+                Object.getOwnPropertyDescriptor(Object.getPrototypeOf(target) || {}, prop);
+
             if (desc && desc.get && !desc.set) {
                 const value = (target as any)[prop];
                 Object.defineProperty(target, prop, {
@@ -89,7 +185,6 @@ function ensureMutableProps(target: any, props: string[]) {
                     value: value === undefined ? {} : (Array.isArray(value) ? [...value] : { ...value }),
                 });
             } else if (!desc) {
-                // no descriptor found (rare) — ensure property exists as object
                 if ((target as any)[prop] === undefined) {
                     Object.defineProperty(target, prop, {
                         configurable: true,
@@ -100,7 +195,7 @@ function ensureMutableProps(target: any, props: string[]) {
                 }
             }
         } catch (e) {
-            // ignore — we'll handle sanitizer errors by skipping
+            // Ignore errors
         }
     }
 }
@@ -108,18 +203,19 @@ function ensureMutableProps(target: any, props: string[]) {
 export const mongoSanitizeMiddleware = (req: Request, res: Response, next: NextFunction) => {
     try {
         ensureMutableProps(req, ['query', 'body', 'params']);
-
         return _mongoSanitize(req as any, res as any, next as any);
     } catch (err) {
-        console.warn('mongoSanitize middleware failed, skipping sanitize for this request:', err);
+        console.warn('⚠️ mongoSanitize middleware failed, skipping sanitize for this request:', err);
         return next();
     }
 };
 
+// ========================================
+// CSRF Protection (Optional)
+// ========================================
 export const csrfProtection = (req: Request, _res: Response, next: Function) => {
     if (req.path.startsWith('/api/')) {
         return next();
     }
-
     next();
 };
