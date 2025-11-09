@@ -55,16 +55,13 @@ async function fixAdmin() {
             console.log('ℹ️  No existing admin user found\n');
         }
 
-        // Create new admin with correct password
+        // Create new admin with correct password (model will hash it automatically)
         console.log('👤 Creating new admin user...\n');
-
-        const salt = await bcrypt.genSalt(12);
-        const hashedPassword = await bcrypt.hash(ADMIN_PASSWORD, salt);
 
         const admin = await User.create({
             email: ADMIN_EMAIL,
             name: ADMIN_NAME,
-            password: hashedPassword,
+            password: ADMIN_PASSWORD, // Plain text - model's pre-save hook will hash it
             role: 'admin',
             isActive: true,
             isEmailVerified: true,

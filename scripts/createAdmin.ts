@@ -1,6 +1,5 @@
 // scripts/createAdmin.ts
 import mongoose from 'mongoose';
-import bcrypt from 'bcryptjs';
 import dotenv from 'dotenv';
 import path from 'path';
 import User from '../src/models/User';
@@ -34,17 +33,12 @@ async function createAdminUser() {
             process.exit(0);
         }
 
-        // Hash password
-        console.log('🔐 Hashing password...');
-        const salt = await bcrypt.genSalt(12);
-        const hashedPassword = await bcrypt.hash(ADMIN_PASSWORD, salt);
-
-        // Create admin user
+        // Create admin user (password will be hashed by the User model's pre-save hook)
         console.log('👤 Creating admin user...');
         const admin = await User.create({
             email: ADMIN_EMAIL,
             name: ADMIN_NAME,
-            password: hashedPassword,
+            password: ADMIN_PASSWORD, // Plain text - model will hash it
             role: 'admin',
             isActive: true,
             isEmailVerified: true,
